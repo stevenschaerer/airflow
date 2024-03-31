@@ -82,11 +82,14 @@ class MappedTaskUpstreamDep(BaseTIDep):
             yield self._passing_status(reason="There are no (unexpanded) mapped dependencies!")
             return
 
-        finished_states = {ti.state for ti in mapped_dependency_tis if ti.state in State.finished}
-        if not finished_states:
+        finished_tis = [ti for ti in mapped_dependency_tis if ti.state in State.finished]
+        if len(finished_tis) != len(mapped_dependency_tis):
+            # At least one mapped dependency is not finished
             return
+        finished_states = {ti.state for ti in finished_tis}
         if finished_states == {TaskInstanceState.SUCCESS}:
-            # Mapped dependencies are at least partially done and only feature successes
+            # Mapped dependencies are all successful
+            yield self._passing_status(reason="All mapped dependencies were successful.")
             return
 
         # At least one mapped dependency was not successful

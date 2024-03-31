@@ -44,50 +44,51 @@ UPSTREAM_FAILED = TaskInstanceState.UPSTREAM_FAILED
 
 
 @pytest.mark.parametrize(
-    ["task_state", "upstream_states", "expected_state", "expect_failed_dep"],
+    ["task_state", "upstream_states", "expected_state", "expected_dep_status"],
     [
         # finished mapped dependencies with state != success result in failed dep and a modified state
-        (None, [None, None], None, False),
-        (None, [SUCCESS, None], None, False),
-        (None, [SKIPPED, None], SKIPPED, True),
-        (None, [FAILED, None], UPSTREAM_FAILED, True),
-        (None, [UPSTREAM_FAILED, None], UPSTREAM_FAILED, True),
-        (None, [REMOVED, None], None, True),
-        # success does not cancel out failed finished mapped dependencies
-        (None, [SKIPPED, SUCCESS], SKIPPED, True),
-        (None, [FAILED, SUCCESS], UPSTREAM_FAILED, True),
-        (None, [UPSTREAM_FAILED, SUCCESS], UPSTREAM_FAILED, True),
-        (None, [REMOVED, SUCCESS], None, True),
+        (None, [SUCCESS, SUCCESS], None, "success"),
+        (None, [SKIPPED, SUCCESS], SKIPPED, "failure"),
+        (None, [FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (None, [UPSTREAM_FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (None, [REMOVED, SUCCESS], None, "failure"),
+        # both dependencies must be done for the state to be modified
+        (None, [None, None], None, None),
+        (None, [SUCCESS, None], None, None),
+        (None, [SKIPPED, None], None, None),
+        (None, [FAILED, None], None, None),
+        (None, [UPSTREAM_FAILED, None], None, None),
+        (None, [REMOVED, None], None, None),
         # skipped and failed/upstream_failed result in upstream_failed
-        (None, [SKIPPED, FAILED], UPSTREAM_FAILED, True),
-        (None, [SKIPPED, UPSTREAM_FAILED], UPSTREAM_FAILED, True),
-        (None, [SKIPPED, REMOVED], SKIPPED, True),
+        (None, [SKIPPED, FAILED], UPSTREAM_FAILED, "failure"),
+        (None, [SKIPPED, UPSTREAM_FAILED], UPSTREAM_FAILED, "failure"),
+        (None, [SKIPPED, REMOVED], SKIPPED, "failure"),
         # if state of the mapped task is already set (e.g., by another ti dep), then failed and
         # upstream_failed are not overwritten but failed deps are still reported
-        (SKIPPED, [None, None], SKIPPED, False),
-        (SKIPPED, [SUCCESS, None], SKIPPED, False),
-        (SKIPPED, [SKIPPED, None], SKIPPED, True),
-        (SKIPPED, [FAILED, None], UPSTREAM_FAILED, True),
-        (SKIPPED, [UPSTREAM_FAILED, None], UPSTREAM_FAILED, True),
-        (SKIPPED, [REMOVED, None], SKIPPED, True),
-        (FAILED, [None, None], FAILED, False),
-        (FAILED, [SUCCESS, None], FAILED, False),
-        (FAILED, [SKIPPED, None], FAILED, True),
-        (FAILED, [FAILED, None], FAILED, True),
-        (FAILED, [UPSTREAM_FAILED, None], FAILED, True),
-        (FAILED, [REMOVED, None], FAILED, True),
-        (UPSTREAM_FAILED, [None, None], UPSTREAM_FAILED, False),
-        (UPSTREAM_FAILED, [SUCCESS, None], UPSTREAM_FAILED, False),
-        (UPSTREAM_FAILED, [SKIPPED, None], UPSTREAM_FAILED, True),
-        (UPSTREAM_FAILED, [FAILED, None], UPSTREAM_FAILED, True),
-        (UPSTREAM_FAILED, [UPSTREAM_FAILED, None], UPSTREAM_FAILED, True),
-        (UPSTREAM_FAILED, [REMOVED, None], UPSTREAM_FAILED, True),
-        (REMOVED, [None, None], REMOVED, False),
-        (REMOVED, [SUCCESS, None], REMOVED, False),
-        (REMOVED, [SKIPPED, None], SKIPPED, True),
-        (REMOVED, [FAILED, None], UPSTREAM_FAILED, True),
-        (REMOVED, [UPSTREAM_FAILED, None], UPSTREAM_FAILED, True),
-        (REMOVED, [REMOVED, None], REMOVED, True),
+        (SKIPPED, [None, None], SKIPPED, None),
+        (SKIPPED, [SUCCESS, SUCCESS], SKIPPED, "success"),
+        (SKIPPED, [SKIPPED, SUCCESS], SKIPPED, "failure"),
+        (SKIPPED, [FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (SKIPPED, [UPSTREAM_FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (SKIPPED, [REMOVED, SUCCESS], SKIPPED, "failure"),
+        (FAILED, [None, None], FAILED, None),
+        (FAILED, [SUCCESS, SUCCESS], FAILED, "success"),
+        (FAILED, [SKIPPED, SUCCESS], FAILED, "failure"),
+        (FAILED, [FAILED, SUCCESS], FAILED, "failure"),
+        (FAILED, [UPSTREAM_FAILED, SUCCESS], FAILED, "failure"),
+        (FAILED, [REMOVED, SUCCESS], FAILED, "failure"),
+        (UPSTREAM_FAILED, [None, None], UPSTREAM_FAILED, None),
+        (UPSTREAM_FAILED, [SUCCESS, SUCCESS], UPSTREAM_FAILED, "success"),
+        (UPSTREAM_FAILED, [SKIPPED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (UPSTREAM_FAILED, [FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (UPSTREAM_FAILED, [UPSTREAM_FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (UPSTREAM_FAILED, [REMOVED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (REMOVED, [None, None], REMOVED, None),
+        (REMOVED, [SUCCESS, SUCCESS], REMOVED, "success"),
+        (REMOVED, [SKIPPED, SUCCESS], SKIPPED, "failure"),
+        (REMOVED, [FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (REMOVED, [UPSTREAM_FAILED, SUCCESS], UPSTREAM_FAILED, "failure"),
+        (REMOVED, [REMOVED, SUCCESS], REMOVED, "failure"),
     ],
 )
 @pytest.mark.parametrize("testcase", ["task", "group"])
@@ -97,7 +98,7 @@ def test_mapped_task_upstream_dep(
     task_state: TaskInstanceState | None,
     upstream_states: list[TaskInstanceState | None],
     expected_state: TaskInstanceState | None,
-    expect_failed_dep: bool,
+    expected_dep_status: str | None,
     testcase: str,
 ):
     from airflow.decorators import task, task_group
@@ -138,14 +139,24 @@ def test_mapped_task_upstream_dep(
 
     expected_statuses = (
         []
-        if not expect_failed_dep
-        else [
-            TIDepStatus(
-                dep_name="Mapped dependencies have succeeded",
-                passed=False,
-                reason="At least one of task's mapped dependencies has not succeeded!",
-            )
-        ]
+        if expected_dep_status is None
+        else (
+            [
+                TIDepStatus(
+                    dep_name="Mapped dependencies have succeeded",
+                    passed=False,
+                    reason="At least one of task's mapped dependencies has not succeeded!",
+                )
+            ]
+            if expected_dep_status == "failure"
+            else [
+                TIDepStatus(
+                    dep_name="Mapped dependencies have succeeded",
+                    passed=True,
+                    reason="All mapped dependencies were successful.",
+                )
+            ]
+        )
     )
     assert get_dep_statuses(dr, mapped_task, session) == expected_statuses
     ti = dr.get_task_instance(session=session, task_id=mapped_task)
@@ -226,24 +237,24 @@ def test_step_by_step(
     assert finished_tis_states == {"t1": SUCCESS}
 
     # Run remaining schedulable tasks
+    schedulable_tis["t3"].run()
+    schedulable_tis["t4"].run()
+    schedulable_tis, finished_tis_states = _one_scheduling_decision_iteration(dr, session)
     if failure_mode == UPSTREAM_FAILED:
         with pytest.raises(AirflowFailException):
             schedulable_tis["t2_a"].run()
+        _one_scheduling_decision_iteration(dr, session)
     else:
         schedulable_tis["t2_a"].run()
-        schedulable_tis, finished_tis_states = _one_scheduling_decision_iteration(dr, session)
+        schedulable_tis, _ = _one_scheduling_decision_iteration(dr, session)
         if not failure_mode:
             schedulable_tis["t2_b"].run()
         else:
             with pytest.raises(AirflowFailException):
                 schedulable_tis["t2_b"].run()
-    schedulable_tis["t3"].run()
-    schedulable_tis["t4"].run()
-
-    # Decision after running all tasks
     _one_scheduling_decision_iteration(dr, session)
 
-    # Test the mapped task upstream dependency status
+    # Test the mapped task upstream dependency checks
     schedulable_tis, finished_tis_states = _one_scheduling_decision_iteration(dr, session)
     expected_finished_tis_states = {
         "t1": SUCCESS,
